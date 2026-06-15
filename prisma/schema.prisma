@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth.js ───────────────────────────────────────────────────────────────────
+
+model User {
+  id                String    @id @default(cuid())
+  name              String?
+  email             String    @unique
+  passwordHash      String?
+  emailVerified     DateTime?
+  image             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+  householdMembers  HouseholdMember[]
+  sentInvites       HouseholdInvite[] @relation("InviteSender")
+  categories        Category[]
+  receipts          Receipt[]
+  paystubs          Paystub[]
+  debts             Debt[]
+  assets            Asset[]
+  dashboardPreferences DashboardPreference?
+  trackedLineItems  TrackedLineItem[]
+  bankConnections   BankConnection[]
+  spendingAlerts    SpendingAlert[]
+  alertNotifications AlertNotification[]
+  budgetGoals       BudgetGoal[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Household / family sharing ──────────────────────────────────────────────
+
+model Household {
+  id          String   @id @default(cuid())
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     HouseholdMember[]
+  invites     HouseholdInvite[]
+  categories  Category[]
+  receipts    Receipt[]
+  transactions Transaction[]
+  paystubs    Paystub[]
+  debts       Debt[]
+  assets      Asset[]
+  budgetGoals BudgetGoal[]
+  spendingAlerts SpendingAlert[]
+}
+
+model HouseholdMember {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  role        String    @default("MEMBER") // OWNER | ADMIN | MEMBER
+  joinedAt    DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([userId])
+}
+
+model HouseholdInvite {
+  id          String    @id @default(cuid())
+  householdId String
+  email       String?
+  token       String    @unique
+  role        String    @default("MEMBER")
+  invitedById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy   User      @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([householdId])
+}
+
+// ─── Finance data (household-scoped) ─────────────────────────────────────────
+
+model Category {
+  id               String        @id @default(cuid())
+  householdId      String
+  userId           String
+  household        Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  color            String        @default("#10b981")
+  icon             String        @default("store")
+  merchantMatchers String        @default("[]")
+  addressMatchers  String        @default("[]")
+  isPinned         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  receipts         Receipt[]
+  transactions     Transaction[]
+  bankTransactions BankTransaction[]
+  budgetGoals      BudgetGoal[]
+  spendingAlerts   SpendingAlert[]
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+model Receipt {
+  id              String        @id @default(cuid())
+  householdId     String
+  userId          String
+  household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  imagePath       String?
+  merchantName    String?
+  merchantAddress String?
+  purchaseDate    DateTime
+  subtotal        Float?
+  tax             Float?
+  totalAmount     Float
+  paymentMethod   String?
+  rawScanData     String?
+  scanStatus      String        @default("PENDING")
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  lineItems       LineItem[]
+  transaction     Transaction?
+
+  @@index([householdId, purchaseDate])
+  @@index([userId, purchaseDate])
+  @@index([categoryId])
+}
+
+model LineItem {
+  id          String   @id @default(cuid())
+  receiptId   String
+  receipt     Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  name        String
+  amount      Float
+  quantity    Float    @default(1)
+  unitPrice   Float?
+  subcategory String?
+  createdAt   DateTime @default(now())
+
+  @@index([receiptId])
+  @@index([name])
+}
+
+model Transaction {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  receiptId   String?   @unique
+  receipt     Receipt?  @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  amount      Float
+  description String
+  date        DateTime
+  type        String    @default("EXPENSE")
+  source      String    @default("MANUAL") // MANUAL | RECEIPT | BANK
+  externalId  String?   @unique
+  createdAt   DateTime  @default(now())
+
+  @@index([householdId, date])
+  @@index([userId, date])
+}
+
+model Paystub {
+  id            String    @id @default(cuid())
+  householdId   String
+  userId        String
+  household     Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imagePath     String?
+  employerName  String?
+  payDate       DateTime
+  periodStart   DateTime?
+  periodEnd     DateTime?
+  grossPay      Float
+  netPay        Float
+  federalTax    Float?
+  stateTax      Float?
+  deductions    String?
+  rawScanData   String?
+  scanStatus    String    @default("PENDING")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([householdId, payDate])
+  @@index([userId, payDate])
+}
+
+model Debt {
+  id              String    @id @default(cuid())
+  householdId     String
+  userId          String
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  type            String    @default("CREDIT_CARD")
+  balance         Float
+  apr             Float
+  minimumPayment  Float?
+  dueDay          Int?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+model Asset {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  type        String    @default("SAVINGS")
+  value       Float
+  apr         Float     @default(0)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+model DashboardPreference {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spendingPeriods   String   @default("[\"day\",\"week\",\"month\",\"year\"]")
+  pinnedCategoryIds String   @default("[]")
+  updatedAt         DateTime @updatedAt
+}
+
+model TrackedLineItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+// ─── Bank sync (Plaid — per-user, encrypted tokens) ──────────────────────────
+
+model BankConnection {
+  id                   String        @id @default(cuid())
+  userId               String
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItemId          String        @unique
+  encryptedAccessToken String
+  institutionId        String?
+  institutionName      String?
+  status               String        @default("ACTIVE")
+  lastSyncedAt         DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  accounts             BankAccount[]
+
+  @@index([userId])
+}
+
+model BankAccount {
+  id               String          @id @default(cuid())
+  bankConnectionId String
+  bankConnection   BankConnection  @relation(fields: [bankConnectionId], references: [id], onDelete: Cascade)
+  plaidAccountId   String          @unique
+  name             String
+  officialName     String?
+  type             String
+  subtype          String?
+  mask             String?
+  currentBalance   Float?
+  availableBalance Float?
+  currency         String          @default("USD")
+  transactions     BankTransaction[]
+
+  @@index([bankConnectionId])
+}
+
+model BankTransaction {
+  id              String       @id @default(cuid())
+  bankAccountId   String
+  bankAccount     BankAccount  @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  plaidTxnId      String       @unique
+  amount          Float
+  date            DateTime
+  name            String
+  merchantName    String?
+  pending         Boolean      @default(false)
+  categoryId      String?
+  category        Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+
+  @@index([bankAccountId, date])
+  @@index([date])
+}
+
+// ─── Budget goals & TKOGON alerts ────────────────────────────────────────────
+
+model BudgetGoal {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name        String
+  amount      Float
+  period      String    @default("MONTHLY") // WEEKLY | MONTHLY | YEARLY
+  lineItem    String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+model SpendingAlert {
+  id              String    @id @default(cuid())
+  householdId     String
+  userId          String
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  type            String    // BUDGET_EXCEEDED | CATEGORY_SPIKE | LINE_ITEM_SPIKE | BANK_LARGE_TXN
+  title           String
+  threshold       Float?
+  lineItem        String?
+  period          String    @default("MONTHLY")
+  isActive        Boolean   @default(true)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime  @default(now())
+  notifications   AlertNotification[]
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+model AlertNotification {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertId   String?
+  alert     SpendingAlert? @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  title     String
+  message   String
+  read      Boolean        @default(false)
+  createdAt DateTime       @default(now())
+
+  @@index([userId, read])
+}
