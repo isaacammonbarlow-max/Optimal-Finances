@@ -40,14 +40,13 @@ function RegisterForm() {
         password,
         redirect: false,
       });
-      if (signInResult?.error) {
+      if (!signInResult?.ok || signInResult?.error) {
         const invite = searchParams.get("invite");
         router.push(invite ? `/login?callbackUrl=/invite/${invite}` : "/login");
         return;
       }
       const invite = searchParams.get("invite");
-      router.push(invite ? `/invite/${invite}` : "/");
-      router.refresh();
+      window.location.href = invite ? `/invite/${invite}` : "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {

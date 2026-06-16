@@ -6,7 +6,8 @@ const publicPaths = ["/login", "/register", "/forgot-password", "/invite"];
 function requestOrigin(req: NextRequest) {
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
   if (!host) return req.nextUrl.origin;
-  return `${req.nextUrl.protocol}//${host}`;
+  const protocol = req.headers.get("x-forwarded-proto") ?? "https";
+  return `${protocol}://${host}`;
 }
 
 export default auth((req) => {
